@@ -1,4 +1,8 @@
-# NitroSwfConverter
+# Nitro SWF Converter
+
+![Node.js](https://img.shields.io/badge/Node.js-14%2B-brightgreen)
+![License](https://img.shields.io/badge/License-MIT-blue)
+![GitHub release](https://img.shields.io/github/v/release/NextGenHabbo/nitro-swf-converter?sort=semver)
 
 Convert Habbo/Nitro furniture assets (`.nitro`) into legacy Flash (`.swf`) libraries using the Adobe AIR SDK.
 
@@ -40,7 +44,7 @@ The core converter responsible for:
   * visualization.xml
   * index.xml
 * Extracts and crops sprite atlases automatically
-* Creates 32px assets from 64px assets when missing
+* Automatically generates 32px assets from 64px sources if 32px versions are missing
 * Pure Node.js implementation
 * No external image libraries required
 
@@ -102,7 +106,7 @@ project/
 Clone the repository:
 
 ```bash
-git clone https://github.com/USERNAME/NitroSwfConverter.git
+git clone https://github.com/NextGenHabbo/nitro-swf-converter.git
 cd NitroSwfConverter
 ```
 
@@ -114,7 +118,7 @@ npm install
 
 ---
 
-# Interactive Usage
+## Interactive Usage
 
 Launch the converter:
 
@@ -190,7 +194,7 @@ Simple base URL:
 https://example.com/nitro/
 ```
 
-Automatically becomes:
+This automatically resolves to:
 
 ```text
 https://example.com/nitro/%className%.nitro
