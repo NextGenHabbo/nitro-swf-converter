@@ -10,9 +10,9 @@ Convert Habbo/Nitro furniture assets (`.nitro`) into legacy Flash (`.swf`) libra
 
 This project contains two tools:
 
-### NitroSwfConverter.js
+### src/NitroSwfConverter.js
 
-An interactive command-line utility that:
+An interactive utility (launched via `Launch Nitro SWF Converter.cmd`) that:
 
 * Converts existing `.nitro` files into `.swf`
 * Downloads furniture assets directly from a Furnidata JSON source
@@ -74,6 +74,7 @@ These are included with modern Windows installations.
 project/
 │
 ├─ src/
+│  ├─ NitroSwfConverter.js
 │  └─ convert-nitro.js
 │
 ├─ nitro/
@@ -86,7 +87,7 @@ project/
 │
 ├─ air-sdk/
 │
-└─ NitroSwfConverter.js
+└─ Launch Nitro SWF Converter.cmd
 ```
 
 ### Folders
@@ -107,29 +108,27 @@ Clone the repository:
 
 ```bash
 git clone https://github.com/NextGenHabbo/nitro-swf-converter.git
-cd NitroSwfConverter
+cd nitro-swf-converter
 ```
 
-Install dependencies:
-
-```bash
-npm install
-```
+No dependencies to install — pure Node.js, no external packages.
 
 ---
 
 ## Interactive Usage
 
-Launch the converter:
+Double-click:
 
-```bash
-node NitroSwfConverter.js
+```text
+Launch Nitro SWF Converter.cmd
 ```
 
-or
+The launcher runs `src\NitroSwfConverter.js` and prompts you to choose a mode.
+
+To use a custom AIR SDK path, run it from a terminal instead:
 
 ```bash
-node NitroSwfConverter.js "C:\harman-air\AIRSDK_51.3.1"
+node src\NitroSwfConverter.js "C:\harman-air\AIRSDK_51.3.1"
 ```
 
 ---
@@ -142,13 +141,7 @@ Place Nitro files into:
 nitro/
 ```
 
-Run:
-
-```bash
-node NitroSwfConverter.js
-```
-
-Choose:
+Launch `Launch Nitro SWF Converter.cmd`, then choose:
 
 ```text
 1. Convert existing .nitro files
@@ -164,7 +157,7 @@ swf/
 
 ## Mode 2 — Download Furniture From Furnidata
 
-Choose:
+Launch `Launch Nitro SWF Converter.cmd`, then choose:
 
 ```text
 2. Download furniture from furnidata.json, then convert

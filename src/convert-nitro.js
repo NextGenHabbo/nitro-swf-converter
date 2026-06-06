@@ -403,6 +403,75 @@ function visualizationXml(json) {
             lines.push('    </directions>');
         }
 
+        const colors = visualization.colors || {};
+        if (Object.keys(colors).length) {
+            lines.push('    <colors>');
+            for (const [id, color] of Object.entries(colors)) {
+                lines.push(`      <color id="${xmlEscape(id)}">`);
+                const colorLayers = (color && color.layers) || {};
+                for (const [layerId, layer] of Object.entries(colorLayers)) {
+                    const layerAttrs = [`id="${xmlEscape(layerId)}"`];
+                    for (const [key, value] of Object.entries(layer)) layerAttrs.push(`${key}="${xmlEscape(value)}"`);
+                    lines.push(`        <colorLayer ${layerAttrs.join(' ')} />`);
+                }
+                lines.push('      </color>');
+            }
+            lines.push('    </colors>');
+        }
+
+        const animations = visualization.animations || {};
+        if (Object.keys(animations).length) {
+            lines.push('    <animations>');
+            for (const [id, animation] of Object.entries(animations)) {
+                const animAttrs = [`id="${xmlEscape(id)}"`];
+                if (animation && animation.transitionTo !== undefined) animAttrs.push(`transitionTo="${xmlEscape(animation.transitionTo)}"`);
+                if (animation && animation.transitionFrom !== undefined) animAttrs.push(`transitionFrom="${xmlEscape(animation.transitionFrom)}"`);
+                if (animation && animation.immediateChangeFrom !== undefined) animAttrs.push(`immediateChangeFrom="${xmlEscape(animation.immediateChangeFrom)}"`);
+                if (animation && animation.randomStart !== undefined) animAttrs.push(`randomStart="${xmlEscape(animation.randomStart)}"`);
+                lines.push(`      <animation ${animAttrs.join(' ')}>`);
+                const animLayers = (animation && animation.layers) || {};
+                for (const [layerId, layer] of Object.entries(animLayers)) {
+                    const layerAttrs = [`id="${xmlEscape(layerId)}"`];
+                    for (const [key, value] of Object.entries(layer)) {
+                        if (key === 'frameSequences') continue;
+                        layerAttrs.push(`${key}="${xmlEscape(value)}"`);
+                    }
+                    const frameSequences = (layer && layer.frameSequences) || {};
+                    if (!Object.keys(frameSequences).length) {
+                        lines.push(`        <animationLayer ${layerAttrs.join(' ')} />`);
+                        continue;
+                    }
+                    lines.push(`        <animationLayer ${layerAttrs.join(' ')}>`);
+                    for (const [seqId, sequence] of Object.entries(frameSequences)) {
+                        const seqAttrs = [`id="${xmlEscape(seqId)}"`];
+                        for (const [key, value] of Object.entries(sequence)) {
+                            if (key === 'frames') continue;
+                            seqAttrs.push(`${key}="${xmlEscape(value)}"`);
+                        }
+                        const seqFrames = (sequence && sequence.frames) || {};
+                        if (!Object.keys(seqFrames).length) {
+                            lines.push(`          <frameSequence ${seqAttrs.join(' ')} />`);
+                            continue;
+                        }
+                        lines.push(`          <frameSequence ${seqAttrs.join(' ')}>`);
+                        for (const [frameId, frame] of Object.entries(seqFrames)) {
+                            const frameAttrs = [];
+                            if (frame && typeof frame === 'object') {
+                                for (const [key, value] of Object.entries(frame)) frameAttrs.push(`${key}="${xmlEscape(value)}"`);
+                            } else {
+                                frameAttrs.push(`id="${xmlEscape(frame)}"`);
+                            }
+                            lines.push(`            <frame ${frameAttrs.join(' ')} />`);
+                        }
+                        lines.push('          </frameSequence>');
+                    }
+                    lines.push('        </animationLayer>');
+                }
+                lines.push('      </animation>');
+            }
+            lines.push('    </animations>');
+        }
+
         lines.push('  </visualization>');
     }
 

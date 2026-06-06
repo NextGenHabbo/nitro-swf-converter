@@ -1,2 +1,2 @@
-# Ignore the temp folder in the project
-temp/
+.claude
+.tmp
