@@ -1,0 +1,19 @@
+# Rename rules for the Nitro -> SWF converter.
+#
+# Two kinds of rules:
+#
+# 1. Strip text (no '='): the line's text is removed from EVERY furni name.
+#    Best for bulk prefix removal across thousands of items.
+#      Habblet_           ->  Habblet_pink25_12  becomes  pink25_12
+#
+# 2. Explicit rename (old=new): renames one specific furni. Overrides strips.
+#      Habblet_pink25_12=pink25_12
+#
+# newName becomes the SWF class/library name AND the output filename.
+# Lines starting with # and blank lines are ignored.
+# Furni with no matching rule keep their original name.
+#
+# Examples:
+# Habblet_
+# Habblet_pink25_12=pink25_12
+Habblet_

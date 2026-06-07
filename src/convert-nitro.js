@@ -25,11 +25,14 @@ function usage() {
 function parseArgs(argv) {
     const args = argv.slice(2);
     let airHome = process.env.AIR_HOME || 'C:\\harman-air\\AIRSDK_51.3.1';
+    let renameMap = null;
     const rest = [];
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--air-home') {
             airHome = args[++i];
+        } else if (args[i] === '--rename-map') {
+            renameMap = args[++i];
         } else {
             rest.push(args[i]);
         }
@@ -40,7 +43,72 @@ function parseArgs(argv) {
         process.exit(1);
     }
 
-    return { airHome, input: path.resolve(rest[0]), output: rest[1] ? path.resolve(rest[1]) : null };
+    return {
+        airHome,
+        input: path.resolve(rest[0]),
+        output: rest[1] ? path.resolve(rest[1]) : null,
+        renameMap
+    };
+}
+
+function loadRenameMap(explicitPath) {
+    const file = explicitPath
+        ? path.resolve(explicitPath)
+        : path.join(path.dirname(__dirname), 'renames.txt');
+
+    const map = new Map();
+    const strips = [];
+    if (!fs.existsSync(file)) return { map, strips };
+
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    for (const raw of lines) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+
+        const eq = line.indexOf('=');
+        if (eq === -1) {
+            // No '=': treat the whole line as text to strip from every name.
+            strips.push(line);
+            continue;
+        }
+
+        const from = line.slice(0, eq).trim();
+        const to = line.slice(eq + 1).trim();
+        if (from && to) map.set(from, to);
+    }
+
+    const ruleCount = map.size + strips.length;
+    if (ruleCount) console.log(`Loaded ${map.size} rename rule(s) and ${strips.length} strip rule(s) from ${file}`);
+    return { map, strips };
+}
+
+function renameInValue(value, from, to) {
+    if (typeof value === 'string') return value.split(from).join(to);
+    if (Array.isArray(value)) return value.map(item => renameInValue(item, from, to));
+    if (value && typeof value === 'object') {
+        const out = {};
+        for (const [key, child] of Object.entries(value)) {
+            out[key.split(from).join(to)] = renameInValue(child, from, to);
+        }
+        return out;
+    }
+    return value;
+}
+
+function resolveNewName(rename, originalName, fileBaseName) {
+    const { map, strips } = rename;
+
+    // Explicit old=new rules win.
+    if (map.has(originalName)) return map.get(originalName);
+    if (map.has(fileBaseName)) return map.get(fileBaseName);
+
+    // Otherwise apply all strip tokens to the name (case-insensitive).
+    let name = originalName;
+    for (const token of strips) {
+        const pattern = new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        name = name.replace(pattern, '');
+    }
+    return name || originalName;
 }
 
 function readI16BE(buffer, offset) {
@@ -629,9 +697,19 @@ function writeAsProject(workDir, json, png) {
     return { main: path.join(srcDir, `${name}.as`), name };
 }
 
-function convertOne(inputFile, outputFile, airHome, tmpRoot) {
-    const { json, png } = unpackNitro(inputFile);
-    const name = safeClassName(json.name || path.basename(inputFile, '.nitro'));
+function convertOne(inputFile, outputFile, airHome, tmpRoot, newName) {
+    const unpacked = unpackNitro(inputFile);
+    let json = unpacked.json;
+    const png = unpacked.png;
+
+    const originalName = json.name || path.basename(inputFile, '.nitro');
+    if (newName && newName !== originalName) {
+        json = renameInValue(json, originalName, newName);
+        if (!json.name) json.name = newName;
+        console.log(`Renamed ${originalName} -> ${newName}`);
+    }
+
+    const name = safeClassName(json.name || newName || path.basename(inputFile, '.nitro'));
     const workDir = path.join(tmpRoot, name);
     fs.rmSync(workDir, { recursive: true, force: true });
     ensureDir(workDir);
@@ -679,10 +757,12 @@ function writeCompilerOutput(text) {
 }
 
 function main() {
-    const { airHome, input, output } = parseArgs(process.argv);
+    const { airHome, input, output, renameMap: renameMapPath } = parseArgs(process.argv);
     const stat = fs.statSync(input);
     const tmpRoot = path.join(path.dirname(__dirname), '.tmp');
     ensureDir(tmpRoot);
+
+    const renameMap = loadRenameMap(renameMapPath);
 
     if (stat.isDirectory()) {
         if (!output) throw new Error('Output folder is required when input is a folder.');
@@ -694,12 +774,16 @@ function main() {
         if (!files.length) throw new Error(`No .nitro files found in ${input}`);
 
         for (const file of files) {
-            const outFile = path.join(output, `${path.basename(file, '.nitro')}.swf`);
-            convertOne(file, outFile, airHome, tmpRoot);
+            const baseName = path.basename(file, '.nitro');
+            const newName = resolveNewName(renameMap, baseName, baseName);
+            const outFile = path.join(output, `${newName}.swf`);
+            convertOne(file, outFile, airHome, tmpRoot, newName);
         }
     } else {
-        const outFile = output || path.join(path.dirname(input), `${path.basename(input, '.nitro')}.swf`);
-        convertOne(input, outFile, airHome, tmpRoot);
+        const baseName = path.basename(input, '.nitro');
+        const newName = resolveNewName(renameMap, baseName, baseName);
+        const outFile = output || path.join(path.dirname(input), `${newName}.swf`);
+        convertOne(input, outFile, airHome, tmpRoot, newName);
     }
 }
 

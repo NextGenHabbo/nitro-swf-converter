@@ -45,6 +45,10 @@ The core converter responsible for:
   * index.xml
 * Extracts and crops sprite atlases automatically
 * Automatically generates 32px assets from 64px sources if 32px versions are missing
+* Preserves multi-state furniture: full `colors` and `animations` (interaction
+  states) are written into the visualization, so animated/multistate furni keep
+  every state instead of collapsing to a single image
+* Bulk rename/prefix-strip during conversion via `renames.txt` (no jpexs needed)
 * Pure Node.js implementation
 * No external image libraries required
 
@@ -55,7 +59,7 @@ The core converter responsible for:
 ### Software
 
 - [Node.js 14+](https://nodejs.org/en/download)
-- [Adobe AIR SDK 51.1.3.1](https://airsdk.harman.com/download/51.1.3.1)
+- [Adobe AIR SDK 51.3.1](https://airsdk.harman.com/download/51.3.1)
 
 ### Windows
 
@@ -205,6 +209,52 @@ Available tokens:
 | ----------- | ------------------- |
 | %className% | Furniture classname |
 | %revision%  | Furniture revision  |
+
+---
+
+## Renaming Furniture
+
+You can rename furni during conversion — no JPEXS Free Flash Decompiler needed. 
+The name is embedded throughout the SWF (class name, library, XML `type` attributes,
+and every asset name), and the converter rewrites all of them consistently.
+
+Create a `renames.txt` in the project root. It supports two kinds of rules:
+
+**1. Strip text** — a line with no `=` is removed from *every* furni name.
+Ideal for stripping a shared prefix across thousands of items in one line:
+
+```text
+Habblet_
+```
+
+This turns `Habblet_pink25_12.nitro` → `pink25_12.swf`, `Habblet_pink25_21.nitro`
+→ `pink25_21.swf`, and so on for the whole batch.
+
+Strip matching is **case-insensitive**, so a single `Habblet_` rule also handles
+`habblet_iluminacao_4.nitro` → `iluminacao_4.swf`. The text after the stripped
+part keeps its original casing.
+
+**2. Explicit rename** — `originalName=newName` renames one specific furni and
+overrides any strip rules:
+
+```text
+Habblet_pink25_12=pink25_12
+```
+
+Rules:
+
+* `originalName` is the `.nitro` filename without its extension.
+* `newName` becomes the SWF class/library name **and** the output filename.
+* Lines starting with `#` and blank lines are ignored.
+* Furni with no matching rule keep their original name.
+
+The launcher (`Launch Nitro SWF Converter.cmd`) picks up `renames.txt`
+automatically. To use a different map file with the direct converter, pass
+`--rename-map`:
+
+```bash
+node src/convert-nitro.js --air-home "C:\harman-air\AIRSDK_51.3.1" --rename-map my-renames.txt nitro swf
+```
 
 ---
 
