@@ -548,6 +548,13 @@ function visualizationXml(json) {
 }
 
 function manifestXml(json, frames) {
+    // The Flash avatar/furni renderer reads each asset's registration offset from
+    // the MANIFEST (<param key="offset">), NOT from assets.xml. Without it figure
+    // parts (hair/clothes) have no placement and render nowhere (bald head / asset
+    // on the floor). Pull the offsets from the same source assets.xml uses and
+    // emit the param. Additive — genuine Habbo furni/pet swfs carry these too.
+    const offsetMap = new Map(normalizedAssets(json));
+
     const lines = [
         xmlHeader(),
         '<manifest>',
@@ -560,7 +567,12 @@ function manifestXml(json, frames) {
     ];
 
     for (const frame of frames) {
-        lines.push(`         <asset name="${xmlEscape(frame.name)}" mimeType="image/png"/>`);
+        const asset = offsetMap.get(frame.name);
+        const x = asset ? (asset.x || 0) : 0;
+        const y = asset ? (asset.y || 0) : 0;
+        lines.push(`         <asset name="${xmlEscape(frame.name)}" mimeType="image/png">`);
+        lines.push(`            <param key="offset" value="${x},${y}"/>`);
+        lines.push('         </asset>');
     }
 
     lines.push('      </assets>');
