@@ -26,6 +26,7 @@ function parseArgs(argv) {
     const args = argv.slice(2);
     let airHome = process.env.AIR_HOME || 'C:\\harman-air\\AIRSDK_51.3.1';
     let renameMap = null;
+    let uncompressed = false;
     const rest = [];
 
     for (let i = 0; i < args.length; i++) {
@@ -33,6 +34,8 @@ function parseArgs(argv) {
             airHome = args[++i];
         } else if (args[i] === '--rename-map') {
             renameMap = args[++i];
+        } else if (args[i] === '--uncompressed') {
+            uncompressed = true;
         } else {
             rest.push(args[i]);
         }
@@ -47,7 +50,8 @@ function parseArgs(argv) {
         airHome,
         input: path.resolve(rest[0]),
         output: rest[1] ? path.resolve(rest[1]) : null,
-        renameMap
+        renameMap,
+        uncompressed
     };
 }
 
@@ -547,7 +551,14 @@ function visualizationXml(json) {
     return lines.join('\n');
 }
 
-function manifestXml(json, frames) {
+// Figure parts (avatar hair/clothing) carry only image frames + a spritesheet.
+// Furni additionally carry visualizations + logic. Detect by their absence so
+// the figure path stays scoped and furni output is never touched.
+function isFigurePart(json) {
+    return !json.visualizations && !json.logic;
+}
+
+function manifestXml(json, frames, figurePart) {
     // The Flash avatar/furni renderer reads each asset's registration offset from
     // the MANIFEST (<param key="offset">), NOT from assets.xml. Without it figure
     // parts (hair/clothes) have no placement and render nowhere (bald head / asset
@@ -559,12 +570,18 @@ function manifestXml(json, frames) {
         xmlHeader(),
         '<manifest>',
         `   <library name="${xmlEscape(json.name)}" version="0.1">`,
-        '      <assets>',
-        '         <asset name="index" mimeType="text/xml"/>',
-        `         <asset name="${xmlEscape(json.name)}_visualization" mimeType="text/xml"/>`,
-        `         <asset name="${xmlEscape(json.name)}_assets" mimeType="text/xml"/>`,
-        `         <asset name="${xmlEscape(json.name)}_logic" mimeType="text/xml"/>`
+        '      <assets>'
     ];
+
+    // Furni need the index/visualization/assets/logic binaryData; figure parts
+    // only register their frame images. Emitting the furni binaries on a figure
+    // part is incorrect and bloats the swf.
+    if (!figurePart) {
+        lines.push('         <asset name="index" mimeType="text/xml"/>');
+        lines.push(`         <asset name="${xmlEscape(json.name)}_visualization" mimeType="text/xml"/>`);
+        lines.push(`         <asset name="${xmlEscape(json.name)}_assets" mimeType="text/xml"/>`);
+        lines.push(`         <asset name="${xmlEscape(json.name)}_logic" mimeType="text/xml"/>`);
+    }
 
     for (const frame of frames) {
         const asset = offsetMap.get(frame.name);
@@ -642,14 +659,21 @@ function writeAsProject(workDir, json, png) {
     fs.writeFileSync(atlasFile, png);
 
     const frames = framesForExport(json);
+    const figurePart = isFigurePart(json);
 
     const binaries = [
-        { className: `${name}_manifest`, file: `${name}_manifest.bin`, data: manifestXml(json, frames), rootProperty: 'manifest', kind: 'const' },
-        { className: `${name}_index`, file: `${name}_index.bin`, data: indexXml(json), rootProperty: 'index', kind: 'const' },
-        { className: `${name}_${name}_assets`, file: `${name}_assets.bin`, data: assetXml(json), rootProperty: `${name}_assets`, kind: 'const' },
-        { className: `${name}_${name}_logic`, file: `${name}_logic.bin`, data: logicXml(json), rootProperty: `${name}_logic`, kind: 'const' },
-        { className: `${name}_${name}_visualization`, file: `${name}_visualization.bin`, data: visualizationXml(json), rootProperty: `${name}_visualization`, kind: 'const' }
+        { className: `${name}_manifest`, file: `${name}_manifest.bin`, data: manifestXml(json, frames, figurePart), rootProperty: 'manifest', kind: 'const' }
     ];
+
+    // Furni need index/visualization/assets/logic binaryData; figure parts do not.
+    if (!figurePart) {
+        binaries.push(
+            { className: `${name}_index`, file: `${name}_index.bin`, data: indexXml(json), rootProperty: 'index', kind: 'const' },
+            { className: `${name}_${name}_assets`, file: `${name}_assets.bin`, data: assetXml(json), rootProperty: `${name}_assets`, kind: 'const' },
+            { className: `${name}_${name}_logic`, file: `${name}_logic.bin`, data: logicXml(json), rootProperty: `${name}_logic`, kind: 'const' },
+            { className: `${name}_${name}_visualization`, file: `${name}_visualization.bin`, data: visualizationXml(json), rootProperty: `${name}_visualization`, kind: 'const' }
+        );
+    }
 
     for (const binary of binaries) {
         fs.writeFileSync(path.join(dataDir, binary.file), Buffer.from(binary.data, 'utf8'));
@@ -706,10 +730,146 @@ function writeAsProject(workDir, json, png) {
     rootLines.push('}');
     writeText(path.join(srcDir, `${name}.as`), rootLines.join('\n'));
 
-    return { main: path.join(srcDir, `${name}.as`), name };
+    return { main: path.join(srcDir, `${name}.as`), name, figurePart, dataDir, frames };
 }
 
-function convertOne(inputFile, outputFile, airHome, tmpRoot, newName) {
+function swfTagHeader(code, length) {
+    if (length < 0x3f) {
+        const header = Buffer.alloc(2);
+        header.writeUInt16LE((code << 6) | length, 0);
+        return header;
+    }
+    const header = Buffer.alloc(6);
+    header.writeUInt16LE((code << 6) | 0x3f, 0);
+    header.writeUInt32LE(length, 2);
+    return header;
+}
+
+// DefineBitsLossless2 (tag 36), BitmapFormat 5 (32-bit). The pixel data is ARGB
+// with the RGB channels premultiplied by alpha, zlib-compressed, row-major,
+// no row padding (32-bit rows are already aligned).
+function buildLossless2Tag(charId, width, height, rgba) {
+    const pixels = Buffer.alloc(width * height * 4);
+    for (let i = 0, j = 0; i < rgba.length; i += 4, j += 4) {
+        const a = rgba[i + 3];
+        pixels[j] = a;
+        pixels[j + 1] = Math.round((rgba[i] * a) / 255);
+        pixels[j + 2] = Math.round((rgba[i + 1] * a) / 255);
+        pixels[j + 3] = Math.round((rgba[i + 2] * a) / 255);
+    }
+
+    const zlibData = zlib.deflateSync(pixels);
+    const body = Buffer.alloc(7 + zlibData.length);
+    body.writeUInt16LE(charId, 0);
+    body.writeUInt8(5, 2);
+    body.writeUInt16LE(width, 3);
+    body.writeUInt16LE(height, 5);
+    zlibData.copy(body, 7);
+    return Buffer.concat([swfTagHeader(36, body.length), body]);
+}
+
+// Build a character id -> exported class name map from the SWF's SymbolClass
+// tags (tag 76).
+function readSymbolClasses(tags) {
+    const charToClass = new Map();
+    for (const tag of tags) {
+        if (tag.code !== 76) continue;
+        const sb = tag.body;
+        let q = 0;
+        const count = sb.readUInt16LE(q); q += 2;
+        for (let i = 0; i < count; i++) {
+            const charId = sb.readUInt16LE(q); q += 2;
+            let end = q;
+            while (end < sb.length && sb[end] !== 0) end++;
+            charToClass.set(charId, sb.subarray(q, end).toString('latin1'));
+            q = end + 1;
+        }
+    }
+    return charToClass;
+}
+
+// Repack the mxmlc output as CWS (zlib) so it opens in RetroSprite and other
+// Flash tooling, which reject the ZWS/LZMA signature. For figure parts, every
+// DefineBitsJPEG2 (tag 21, no alpha) frame bitmap mxmlc produced is rewritten
+// to a DefineBitsLossless2 (tag 36, RGBA) built from the original PNG (which
+// still has alpha), matched to its SWF character via the SymbolClass name.
+// Returns the number of bitmaps whose alpha was restored.
+function repackSwf(swfFile, project) {
+    const raw = fs.readFileSync(swfFile);
+    const sig = raw.subarray(0, 3).toString('ascii');
+    const version = raw[3];
+
+    let body;
+    if (sig === 'FWS') body = raw.subarray(8);
+    else if (sig === 'CWS') body = zlib.inflateSync(raw.subarray(8));
+    else throw new Error(`Cannot repack ${sig} SWF (need FWS/CWS); build with -compress=false.`);
+
+    // Skip the movie header: RECT (frame size) + frame rate (2) + frame count (2).
+    const nbits = body[0] >> 3;
+    const rectBytes = Math.ceil((5 + nbits * 4) / 8);
+    const tagsStart = rectBytes + 4;
+
+    // Parse all tags (bodies copied verbatim; nested tags stay opaque).
+    const tags = [];
+    let p = tagsStart;
+    while (p < body.length) {
+        const rh = body.readUInt16LE(p); p += 2;
+        const code = rh >> 6;
+        let len = rh & 0x3f;
+        if (len === 0x3f) { len = body.readUInt32LE(p); p += 4; }
+        tags.push({ code, body: body.subarray(p, p + len) });
+        p += len;
+        if (code === 0) break;
+    }
+
+    // Figure parts: map each frame class name -> source PNG (with alpha) on disk.
+    let charToPng = null;
+    if (project.figurePart) {
+        const charToClass = readSymbolClasses(tags);
+        const classToPng = new Map();
+        for (const frame of project.frames) {
+            classToPng.set(`${project.name}_${safeClassName(frame.name)}`, path.join(project.dataDir, `${frame.name}.png`));
+        }
+        charToPng = new Map();
+        for (const [charId, className] of charToClass) {
+            const pngFile = classToPng.get(className);
+            if (pngFile) charToPng.set(charId, pngFile);
+        }
+    }
+
+    let replaced = 0;
+    const rebuilt = [];
+    for (const tag of tags) {
+        if (tag.code === 21 && charToPng) {
+            const charId = tag.body.readUInt16LE(0);
+            const pngFile = charToPng.get(charId);
+            if (pngFile && fs.existsSync(pngFile)) {
+                const image = decodePng(fs.readFileSync(pngFile));
+                rebuilt.push(buildLossless2Tag(charId, image.width, image.height, image.rgba));
+                replaced++;
+                continue;
+            }
+        }
+        rebuilt.push(Buffer.concat([swfTagHeader(tag.code, tag.body.length), tag.body]));
+    }
+
+    const newBody = Buffer.concat([body.subarray(0, tagsStart), ...rebuilt]);
+    const header = Buffer.alloc(8);
+    // FileLength is the uncompressed total (8-byte header + body) for both forms.
+    header.writeUInt8(version, 3);
+    header.writeUInt32LE(8 + newBody.length, 4);
+
+    if (project.uncompressed) {
+        header.write('FWS', 0, 'ascii');
+        fs.writeFileSync(swfFile, Buffer.concat([header, newBody]));
+    } else {
+        header.write('CWS', 0, 'ascii');
+        fs.writeFileSync(swfFile, Buffer.concat([header, zlib.deflateSync(newBody)]));
+    }
+    return replaced;
+}
+
+function convertOne(inputFile, outputFile, airHome, tmpRoot, newName, uncompressed) {
     const unpacked = unpackNitro(inputFile);
     let json = unpacked.json;
     const png = unpacked.png;
@@ -727,6 +887,7 @@ function convertOne(inputFile, outputFile, airHome, tmpRoot, newName) {
     ensureDir(workDir);
 
     const project = writeAsProject(workDir, json, png);
+    project.uncompressed = !!uncompressed;
     ensureDir(path.dirname(outputFile));
 
     const mxmlc = path.join(airHome, 'bin', 'mxmlc.bat');
@@ -737,6 +898,9 @@ function convertOne(inputFile, outputFile, airHome, tmpRoot, newName) {
         mxmlc,
         '-static-link-runtime-shared-libraries=true',
         '-use-network=false',
+        // Emit an uncompressed SWF (FWS). Node has no LZMA to read mxmlc's
+        // default ZWS output; we repack to CWS (zlib) ourselves below.
+        '-compress=false',
         `-source-path+=${path.join(workDir, 'src')}`,
         `-output=${outputFile}`,
         project.main
@@ -747,6 +911,12 @@ function convertOne(inputFile, outputFile, airHome, tmpRoot, newName) {
 
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`mxmlc failed with exit code ${result.status}`);
+
+    // Repack to CWS (zlib) so the output opens in RetroSprite and other Flash
+    // tooling (which reject ZWS/LZMA). For figure parts this also rewrites the
+    // alpha-less DefineBitsJPEG2 frames mxmlc produced back to DefineBitsLossless2.
+    const fixed = repackSwf(outputFile, project);
+    if (fixed) console.log(`Restored alpha on ${fixed} frame bitmap(s) in ${outputFile}`);
 
     console.log(`Wrote ${outputFile}`);
 }
@@ -769,12 +939,13 @@ function writeCompilerOutput(text) {
 }
 
 function main() {
-    const { airHome, input, output, renameMap: renameMapPath } = parseArgs(process.argv);
+    const { airHome, input, output, renameMap: renameMapPath, uncompressed } = parseArgs(process.argv);
     const stat = fs.statSync(input);
     const tmpRoot = path.join(path.dirname(__dirname), '.tmp');
     ensureDir(tmpRoot);
 
     const renameMap = loadRenameMap(renameMapPath);
+    console.log(`Output compression: ${uncompressed ? 'uncompressed (FWS)' : 'compressed (CWS/zlib)'}`);
 
     if (stat.isDirectory()) {
         if (!output) throw new Error('Output folder is required when input is a folder.');
@@ -789,13 +960,13 @@ function main() {
             const baseName = path.basename(file, '.nitro');
             const newName = resolveNewName(renameMap, baseName, baseName);
             const outFile = path.join(output, `${newName}.swf`);
-            convertOne(file, outFile, airHome, tmpRoot, newName);
+            convertOne(file, outFile, airHome, tmpRoot, newName, uncompressed);
         }
     } else {
         const baseName = path.basename(input, '.nitro');
         const newName = resolveNewName(renameMap, baseName, baseName);
         const outFile = output || path.join(path.dirname(input), `${newName}.swf`);
-        convertOne(input, outFile, airHome, tmpRoot, newName);
+        convertOne(input, outFile, airHome, tmpRoot, newName, uncompressed);
     }
 }
 

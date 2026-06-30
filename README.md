@@ -49,6 +49,8 @@ The core converter responsible for:
   states) are written into the visualization, so animated/multistate furni keep
   every state instead of collapsing to a single image
 * Bulk rename/prefix-strip during conversion via `renames.txt` (no jpexs needed)
+* Choose output compression: `CWS` (zlib, default — opens in RetroSprite/Flash
+  tooling) or uncompressed `FWS` (`--uncompressed`)
 * Pure Node.js implementation
 * No external image libraries required
 

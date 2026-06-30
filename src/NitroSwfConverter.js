@@ -263,8 +263,12 @@ async function downloadFurnitureNitro(furnidataSource, nitroUrlTemplate) {
     return { downloaded, skipped, failed, total: entries.length };
 }
 
-function runConverter(airHome) {
-    const result = cp.spawnSync(process.execPath, [converter, '--air-home', airHome, nitroDir, swfDir], {
+function runConverter(airHome, uncompressed) {
+    const args = [converter, '--air-home', airHome];
+    if (uncompressed) args.push('--uncompressed');
+    args.push(nitroDir, swfDir);
+
+    const result = cp.spawnSync(process.execPath, args, {
         cwd: root,
         stdio: 'inherit'
     });
@@ -335,6 +339,14 @@ async function main() {
         for (const file of nitroFiles) console.log(`  - ${file}`);
 
         console.log('');
+        console.log('Output format:');
+        console.log('  1. Compressed (CWS / zlib) - smaller, opens in RetroSprite & Flash tools');
+        console.log('  2. Uncompressed (FWS) - largest, maximum tool compatibility');
+        console.log('');
+        const compressionInput = await question(rl, 'Choose output format [1]: ');
+        const uncompressed = compressionInput.trim() === '2';
+
+        console.log('');
         const start = await question(rl, 'Start dump now? [Y/N]: ');
         if (!/^(y|yes)$/i.test(start.trim())) {
             console.log('Cancelled.');
@@ -343,7 +355,7 @@ async function main() {
 
         console.log('');
         console.log('Starting conversion...');
-        runConverter(airHome);
+        runConverter(airHome, uncompressed);
 
         console.log('');
         console.log('Done. SWFs are in:');
